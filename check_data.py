@@ -72,7 +72,7 @@ print(f"  Promoted:          {sr_promoted}")
 
 # 5. Sample: top project from search
 print("\n--- TOP-5 PROJECTS (by position, query 1) ---")
-    top5 = conn.execute("""
+top5 = conn.execute("""
     SELECT sr.position, sr.appreciations, sr.views, p.title, p.published_date,
            p.module_count, p.image_count, p.video_count, p.description_length,
            p.is_featured, p.co_owners_count, p.title_keyword_match,
