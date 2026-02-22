@@ -382,22 +382,59 @@ async def scrape_project_details(page: Page, project_url: str, query: str = "") 
         data["publish_day_of_week"] = dow
         data["publish_hour"] = hour
 
-    # Tags
+    # Tags + Tools — extract from embedded JSON in <script> tags (most reliable)
+    html_source = await page.content()
     tags = []
-    tag_links = await page.query_selector_all('a[href*="tracking_source=project_tag"]')
-    for tl in tag_links:
-        tag_text = (await tl.inner_text()).strip()
-        if tag_text:
-            tags.append(tag_text)
+    tools = []
+
+    # Parse tags from JSON: "tags":[{"id":123,"title":"design"},...]
+    tags_json_match = re.findall(r'"tags"\s*:\s*\[(.*?)\]', html_source)
+    for match in tags_json_match:
+        if not match:
+            continue
+        try:
+            items = json.loads(f"[{match}]")
+            for item in items:
+                if isinstance(item, dict) and "title" in item:
+                    tag_title = item["title"].strip()
+                    if tag_title and tag_title not in tags:
+                        tags.append(tag_title)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Fallback: CSS selector
+    if not tags:
+        tag_links = await page.query_selector_all('a[href*="tracking_source=project_tag"]')
+        for tl in tag_links:
+            tag_text = (await tl.inner_text()).strip()
+            if tag_text and tag_text not in tags:
+                tags.append(tag_text)
+
     data["tags"] = tags
 
-    # Tools
-    tools = []
-    tool_links = await page.query_selector_all('a[href*="tools="]')
-    for tl in tool_links:
-        tool_text = (await tl.inner_text()).strip()
-        if tool_text:
-            tools.append(tool_text)
+    # Parse tools from JSON: "tools":[{"id":123,"title":"Photoshop",...},...]
+    tools_json_match = re.findall(r'"tools"\s*:\s*\[(.*?)\]', html_source)
+    for match in tools_json_match:
+        if not match:
+            continue
+        try:
+            items = json.loads(f"[{match}]")
+            for item in items:
+                if isinstance(item, dict) and "title" in item:
+                    tool_title = item["title"].strip()
+                    if tool_title and tool_title not in tools:
+                        tools.append(tool_title)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Fallback: CSS selector
+    if not tools:
+        tool_links = await page.query_selector_all('a[href*="tools="]')
+        for tl in tool_links:
+            tool_text = (await tl.inner_text()).strip()
+            if tool_text and tool_text not in tools:
+                tools.append(tool_text)
+
     data["tools_used"] = json.dumps(tools, ensure_ascii=False) if tools else None
 
     # Modules (content blocks)
@@ -469,13 +506,29 @@ async def scrape_project_details(page: Page, project_url: str, query: str = "") 
     featured_indicators = await page.query_selector_all('[class*="Featured"], [class*="featured-badge"]')
     data["is_featured"] = 1 if len(featured_indicators) > 0 else 0
 
-    # Creative fields
+    # Creative fields — from JSON or CSS
     creative_fields = []
-    cf_links = await page.query_selector_all('a[href*="field="]')
-    for cf in cf_links:
-        cf_text = (await cf.inner_text()).strip()
-        if cf_text:
-            creative_fields.append(cf_text)
+    fields_json_match = re.findall(r'"fields"\s*:\s*\[(.*?)\]', html_source)
+    for match in fields_json_match:
+        if not match:
+            continue
+        try:
+            items = json.loads(f"[{match}]")
+            for item in items:
+                if isinstance(item, dict):
+                    label = item.get("label") or item.get("title") or item.get("name", "")
+                    if label and label not in creative_fields:
+                        creative_fields.append(label.strip())
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    if not creative_fields:
+        cf_links = await page.query_selector_all('a[href*="field="]')
+        for cf in cf_links:
+            cf_text = (await cf.inner_text()).strip()
+            if cf_text and cf_text not in creative_fields:
+                creative_fields.append(cf_text)
+
     data["creative_fields"] = json.dumps(creative_fields, ensure_ascii=False) if creative_fields else None
 
     return data
