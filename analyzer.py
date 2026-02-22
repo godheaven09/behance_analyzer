@@ -470,6 +470,90 @@ def trend_analysis(query: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Experiment tracking
+# ---------------------------------------------------------------------------
+
+def experiment_tracking_report() -> str:
+    lines = []
+
+    if not config.TRACKED_PROJECTS:
+        return ""
+
+    lines.append(f"\n{'='*80}")
+    lines.append(f"  EXPERIMENT TRACKING")
+    lines.append(f"{'='*80}\n")
+
+    for tp in config.TRACKED_PROJECTS:
+        bid = tp.get("behance_id")
+        if not bid:
+            continue
+        label = tp.get("label", bid)
+
+        history = db.get_tracked_history(bid)
+        if not history:
+            lines.append(f"--- {label} ({bid}) ---")
+            lines.append(f"  No data yet\n")
+            continue
+
+        lines.append(f"--- {label} ({bid}) ---")
+
+        first = history[0]
+        latest = history[-1]
+        total_snapshots = len(history)
+
+        lines.append(f"  Snapshots: {total_snapshots}")
+        lines.append(f"  First seen: {first['timestamp'][:16]}")
+        lines.append(f"  Latest:     {latest['timestamp'][:16]}")
+        lines.append(f"  Days since publish: {latest.get('days_since_publish', '?')}")
+        lines.append(f"")
+
+        # Velocity
+        if total_snapshots >= 2:
+            appr_diff = latest["appreciations"] - first["appreciations"]
+            views_diff = latest["views"] - first["views"]
+            time_diff_hours = (
+                datetime.fromisoformat(latest["timestamp"]) -
+                datetime.fromisoformat(first["timestamp"])
+            ).total_seconds() / 3600
+            if time_diff_hours > 0:
+                lines.append(f"  Velocity over {time_diff_hours:.0f}h:")
+                lines.append(f"    Appr:  {first['appreciations']} -> {latest['appreciations']} (+{appr_diff}, {appr_diff / (time_diff_hours/24):.1f}/day)")
+                lines.append(f"    Views: {first['views']} -> {latest['views']} (+{views_diff}, {views_diff / (time_diff_hours/24):.1f}/day)")
+        else:
+            lines.append(f"  Current: appr={latest['appreciations']} views={latest['views']}")
+
+        # Position history
+        lines.append(f"")
+        lines.append(f"  Position history ('инфографика'):")
+        for h in history:
+            pos = h.get("position_infografika")
+            ts = h["timestamp"][:16]
+            status = f"#{pos}" if pos else "NOT in top-100"
+            lines.append(f"    {ts} | {status} | appr={h['appreciations']} views={h['views']}")
+
+        lines.append(f"  Position history ('дизайн карточек'):")
+        for h in history:
+            pos = h.get("position_design_cards")
+            ts = h["timestamp"][:16]
+            status = f"#{pos}" if pos else "NOT in top-100"
+            lines.append(f"    {ts} | {status} | appr={h['appreciations']} views={h['views']}")
+
+        # Summary
+        best_pos_inf = min((h["position_infografika"] for h in history if h["position_infografika"]), default=None)
+        best_pos_dc = min((h["position_design_cards"] for h in history if h["position_design_cards"]), default=None)
+        times_in_top = sum(1 for h in history if h["position_infografika"] or h["position_design_cards"])
+
+        lines.append(f"")
+        lines.append(f"  SUMMARY:")
+        lines.append(f"    Best position (инфографика):    {'#' + str(best_pos_inf) if best_pos_inf else 'never in top-100'}")
+        lines.append(f"    Best position (дизайн карточек): {'#' + str(best_pos_dc) if best_pos_dc else 'never in top-100'}")
+        lines.append(f"    Times found in top-100: {times_in_top}/{total_snapshots} snapshots")
+        lines.append(f"")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Full report
 # ---------------------------------------------------------------------------
 
@@ -495,6 +579,8 @@ def generate_full_report(queries: list[str] | None = None) -> str:
         report_parts.append(correlation_analysis(df, query))
         report_parts.append(gap_analysis(df, my_df, query))
         report_parts.append(trend_analysis(query))
+
+    report_parts.append(experiment_tracking_report())
 
     report = "\n".join(report_parts)
 

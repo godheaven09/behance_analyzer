@@ -130,6 +130,22 @@ def init_db():
         ON author_snapshots(author_id);
     CREATE INDEX IF NOT EXISTS idx_snapshots_query
         ON snapshots(query);
+
+    CREATE TABLE IF NOT EXISTS tracked_snapshots (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp       TEXT    NOT NULL,
+        behance_id      TEXT    NOT NULL,
+        label           TEXT,
+        appreciations   INTEGER DEFAULT 0,
+        views           INTEGER DEFAULT 0,
+        comments        INTEGER DEFAULT 0,
+        position_infografika    INTEGER,  -- NULL = not in top-100
+        position_design_cards   INTEGER,  -- NULL = not in top-100
+        days_since_publish      REAL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_tracked_behance_id
+        ON tracked_snapshots(behance_id);
     """)
 
     conn.commit()
@@ -348,6 +364,37 @@ def get_author_stats_latest(author_id: int) -> dict | None:
     """, (author_id,)).fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+def insert_tracked_snapshot(data: dict):
+    conn = get_connection()
+    conn.execute("""
+        INSERT INTO tracked_snapshots (
+            timestamp, behance_id, label, appreciations, views,
+            comments, position_infografika, position_design_cards,
+            days_since_publish
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        datetime.utcnow().isoformat(),
+        data["behance_id"], data.get("label"),
+        data.get("appreciations", 0), data.get("views", 0),
+        data.get("comments", 0),
+        data.get("position_infografika"),
+        data.get("position_design_cards"),
+        data.get("days_since_publish"),
+    ))
+    conn.commit()
+    conn.close()
+
+
+def get_tracked_history(behance_id: str) -> list:
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM tracked_snapshots WHERE behance_id = ? ORDER BY timestamp ASC",
+        (behance_id,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 def get_my_projects() -> list:

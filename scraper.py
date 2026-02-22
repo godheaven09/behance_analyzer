@@ -905,10 +905,123 @@ async def run_full_scrape(queries: list[str] | None = None, include_secondary: b
                     "cover_image_url": r.get("cover_image_url"),
                 })
 
+        # 7. Track experiment projects
+        if config.TRACKED_PROJECTS:
+            log.info(f"Tracking {len(config.TRACKED_PROJECTS)} experiment projects...")
+            await _track_experiment_projects(page, all_search_data)
+
         await browser.close()
 
     log.info("Full scrape completed!")
     return all_search_data
+
+
+async def _track_experiment_projects(page: Page, search_data: dict):
+    """Scrape current stats for tracked experiment projects and find their positions."""
+    from datetime import datetime
+
+    for tp in config.TRACKED_PROJECTS:
+        bid = tp.get("behance_id")
+        if not bid:
+            continue
+
+        label = tp.get("label", bid)
+        url = tp.get("url") or f"{config.BEHANCE_BASE_URL}/gallery/{bid}/"
+        log.info(f"  Tracking '{label}' ({bid})...")
+
+        appr = 0
+        views = 0
+        comments = 0
+        days_since = None
+
+        try:
+            await page.goto(url, wait_until="networkidle", timeout=config.NAVIGATION_TIMEOUT)
+            await asyncio.sleep(_rand_delay())
+
+            card_text = await page.inner_text("body")
+
+            # Parse appreciations and views from project page stats
+            # Page shows stats in the profile card area or we can count from inner text
+            appr_match = re.search(r"[Оо]ценок|[Оо]ценка|[Оо]ценки", card_text)
+            if appr_match:
+                after = card_text[appr_match.start():]
+                nm = re.search(r":\s*([\d\s\xa0,.]+)", after)
+                if nm:
+                    # This finds per-project appreciations in comments area, not total
+                    pass
+
+            # Better: parse from the search card data we already have
+            # Use the page's own stat display
+            page_html = await page.content()
+
+            # Extract stats from embedded JSON
+            stats_match = re.search(r'"stats"\s*:\s*\{([^}]+)\}', page_html)
+            if stats_match:
+                try:
+                    stats_str = "{" + stats_match.group(1) + "}"
+                    import json as _json
+                    stats_obj = _json.loads(stats_str)
+                    appr = stats_obj.get("appreciations", 0)
+                    views = stats_obj.get("views", 0)
+                    comments = stats_obj.get("comments", 0)
+                except Exception:
+                    pass
+
+            # Fallback: parse from visible text
+            if views == 0:
+                views_m = re.search(r"[Пп]росмотров|[Пп]росмотр[аы]?", card_text)
+                if views_m:
+                    after = card_text[views_m.start():]
+                    nm = re.search(r":\s*([\d\s\xa0,.]+)", after)
+                    if nm:
+                        views = _parse_number(nm.group(1).replace("\xa0", ""))
+
+            # Published date for days_since
+            date_match = re.search(
+                r"(?:Опубликовано|Published):\s*(.+?\d{4})\s*г?\.?",
+                card_text,
+            )
+            if date_match:
+                pub_date, _, _ = _parse_behance_date(date_match.group(0))
+                if pub_date:
+                    pub_dt = datetime.strptime(pub_date, "%Y-%m-%d")
+                    days_since = (datetime.utcnow() - pub_dt).total_seconds() / 86400
+
+        except Exception as e:
+            log.warning(f"  Error tracking {bid}: {e}")
+
+        # Find positions in search results
+        pos_info = {}
+        pos_info["position_infografika"] = None
+        pos_info["position_design_cards"] = None
+
+        query_map = {"инфографика": "position_infografika", "дизайн карточек": "position_design_cards"}
+        for query, field in query_map.items():
+            if query in search_data:
+                for r in search_data[query]["results"]:
+                    if r["behance_id"] == bid:
+                        pos_info[field] = r["position"]
+                        break
+
+        db.insert_tracked_snapshot({
+            "behance_id": bid,
+            "label": label,
+            "appreciations": appr,
+            "views": views,
+            "comments": comments,
+            "position_infografika": pos_info["position_infografika"],
+            "position_design_cards": pos_info["position_design_cards"],
+            "days_since_publish": round(days_since, 2) if days_since else None,
+        })
+
+        found_in = []
+        if pos_info["position_infografika"]:
+            found_in.append(f"инфографика:#{pos_info['position_infografika']}")
+        if pos_info["position_design_cards"]:
+            found_in.append(f"дизайн карточек:#{pos_info['position_design_cards']}")
+
+        log.info(f"    {label}: appr={appr} views={views} | "
+                 f"{'FOUND: ' + ', '.join(found_in) if found_in else 'NOT in top-100'}")
 
 
 def run_scrape(queries=None, include_secondary=False):

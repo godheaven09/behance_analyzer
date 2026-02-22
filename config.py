@@ -32,6 +32,14 @@ SEARCH_QUERIES = {
     ],
 }
 
+# Tracked experiment projects — add behance_id after publishing
+# Format: {"label": "description", "behance_id": "123456", "url": "https://..."}
+TRACKED_PROJECTS = [
+    # {"label": "A_bot_new_title",   "behance_id": "", "url": ""},
+    # {"label": "B_organic_new_title", "behance_id": "", "url": ""},
+    # {"label": "C_bot_old_title",   "behance_id": "", "url": ""},
+]
+
 SORT_TYPE = "recommended"
 PROJECTS_PER_QUERY = 100  # ~4 pages
 PAGES_PER_QUERY = 5       # with buffer
