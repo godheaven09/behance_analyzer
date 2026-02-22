@@ -519,34 +519,43 @@ async def scrape_author_profile(page: Page, username: str) -> dict:
     if ms_match:
         data["member_since"] = _parse_member_since(ms_match.group(0))
 
-    # Bio
-    bio_el = await page.query_selector('[class*="UserInfo-bio"], [class*="about"]')
-    if bio_el:
-        data["bio_text"] = (await bio_el.inner_text()).strip()[:1000]
+    # Bio — try multiple selectors
+    bio_text = ""
+    for bio_sel in ['[class*="UserInfo-bio"]', '[class*="about"]', '[class*="Bio"]', '[class*="bio"]']:
+        bio_el = await page.query_selector(bio_sel)
+        if bio_el:
+            bio_text = (await bio_el.inner_text()).strip()
+            if bio_text and len(bio_text) > 10:
+                break
+    if not bio_text:
+        # Try finding "Обо мне" or "Read More" section
+        about_match = re.search(r"(?:Обо мне|About)\n(.+?)(?:\n|Read More|Подробнее)", page_text, re.DOTALL)
+        if about_match:
+            bio_text = about_match.group(1).strip()
+    if bio_text:
+        data["bio_text"] = bio_text[:1000]
 
-    # Stats table
+    # Stats table — RU: "Просмотры проекта", "Оценки", "Подписчики", "Подписки"
+    #               EN: "Project Views", "Appreciations", "Followers", "Following"
     stats = {}
-    stats_rows = await page.query_selector_all('table tr, [class*="Stat"]')
+    stats_rows = await page.query_selector_all("table tr")
     for row in stats_rows:
-        row_text = (await row.inner_text()).strip()
-        if "Project Views" in row_text or "views" in row_text.lower():
-            nums = re.findall(r"[\d,]+", row_text.replace(",", ""))
-            if nums:
-                stats["total_views"] = _parse_number(nums[-1] if len(nums) > 0 else "0")
-        elif "Appreciation" in row_text:
-            nums = re.findall(r"[\d,]+", row_text.replace(",", ""))
-            if nums:
-                stats["total_appreciations"] = _parse_number(nums[-1] if len(nums) > 0 else "0")
-        elif "Follower" in row_text and "Following" not in row_text:
-            nums = re.findall(r"[\d,]+", row_text.replace(",", ""))
-            if nums:
-                stats["followers"] = _parse_number(nums[-1] if len(nums) > 0 else "0")
-        elif "Following" in row_text:
-            nums = re.findall(r"[\d,]+", row_text.replace(",", ""))
-            if nums:
-                stats["following"] = _parse_number(nums[-1] if len(nums) > 0 else "0")
+        row_text = (await row.inner_text()).strip().replace("\xa0", "")
+        nums = re.findall(r"\d+", row_text)
+        if not nums:
+            continue
+        num_val = int("".join(nums))
+        row_lower = row_text.lower()
+        if any(w in row_lower for w in ["просмотры", "project views", "views"]):
+            stats["total_views"] = num_val
+        elif any(w in row_lower for w in ["оценки", "appreciat"]):
+            stats["total_appreciations"] = num_val
+        elif any(w in row_lower for w in ["подписчики", "follower"]) and "подписки" not in row_lower and "following" not in row_lower:
+            stats["followers"] = num_val
+        elif any(w in row_lower for w in ["подписки", "following"]):
+            stats["following"] = num_val
 
-    # Alternative stats parsing via links with /analytics
+    # Fallback: parse from links
     if not stats.get("total_views"):
         analytics_links = await page.query_selector_all('a[href*="/analytics"]')
         for al in analytics_links:
@@ -554,12 +563,11 @@ async def scrape_author_profile(page: Page, username: str) -> dict:
             num = _parse_number(al_text)
             if num > 0:
                 parent = await al.evaluate("el => el.closest('tr')?.innerText || el.parentElement?.innerText || ''")
-                if "View" in parent:
+                if any(w in parent for w in ["Просмотры", "View", "view"]):
                     stats["total_views"] = num
-                elif "Appreciat" in parent:
+                elif any(w in parent for w in ["Оценки", "Appreciat", "appreciat"]):
                     stats["total_appreciations"] = num
 
-    # Followers/following from links
     for selector, key in [
         ('a[href*="/followers"]', "followers"),
         ('a[href*="/following"]', "following"),
@@ -762,6 +770,12 @@ async def run_full_scrape(queries: list[str] | None = None, include_secondary: b
                 all_projects[pid] = mp
             else:
                 all_projects[pid]["is_my_project"] = 1
+            # Calculate keyword match for my projects against all queries
+            best_match = 0.0
+            for q in queries:
+                score = _keyword_match_score(mp.get("title", ""), q)
+                best_match = max(best_match, score)
+            all_projects.setdefault(pid, mp)["title_keyword_match"] = best_match
 
         if my_username not in all_authors:
             all_authors[my_username] = {"username": my_username}
