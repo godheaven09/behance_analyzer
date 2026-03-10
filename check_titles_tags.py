@@ -27,6 +27,8 @@ for query in ["инфографика", "дизайн карточек"]:
         ORDER BY sr.position
     """, (last_snap,)).fetchall()
 
+    print(f"  DEBUG: snapshot_id={last_snap}, results={len(results)}")
+
     # Check how many titles contain query words
     query_words = query.lower().split()
 
