@@ -41,8 +41,8 @@ for query in ["инфографика", "дизайн карточек"]:
                 contains_all += 1
             if any(w in title_low for w in query_words):
                 contains_any += 1
-        total = len(tier_results)
-        print(f"  {tier:<8}: {contains_all}/{total} contain ALL words ({contains_all/total*100:.0f}%) | {contains_any}/{total} contain ANY word ({contains_any/total*100:.0f}%)")
+        total = len(tier_results) or 1
+        print(f"  {tier:<8}: {contains_all}/{len(tier_results)} contain ALL words ({contains_all/total*100:.0f}%) | {contains_any}/{len(tier_results)} contain ANY word ({contains_any/total*100:.0f}%)")
 
     # Show actual titles for top-20
     print(f"\n--- Top-20 titles ---")
