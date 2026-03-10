@@ -637,26 +637,68 @@ async def scrape_author_profile(page: Page, username: str) -> dict:
 
     data["stats"] = stats
 
-    # Pro badge
-    pro_el = await page.query_selector('[class*="Pro"], [class*="pro-badge"]')
-    data["has_pro"] = 1 if pro_el else 0
+    # Pro badge — check if BadgedDisplayName badge container has actual content
+    data["has_pro"] = 0
+    badge_container = await page.query_selector('[class*="BadgedDisplayName-badgeContainer"]')
+    if badge_container:
+        badge_text = (await badge_container.inner_text()).strip()
+        if badge_text and "pro" in badge_text.lower():
+            data["has_pro"] = 1
+    if not data["has_pro"]:
+        # Fallback: no "Start Free Trial" upsell = already PRO
+        upsell = await page.query_selector('[class*="CreatorProUpsellBanner"]')
+        upgrade_btn = await page.query_selector('[class*="UpgradeButton"]')
+        if not upsell and not upgrade_btn:
+            data["has_pro"] = 1
 
-    # Services
-    services_el = await page.query_selector('[class*="Service"], [class*="service"]')
-    data["has_services"] = 1 if services_el else 0
+    # Services — look for actual services content, not just the nav tab
+    data["has_services"] = 0
+    svc_content = await page.query_selector('[class*="ServicesList"], [class*="ServicesCard"], [class*="ServiceItem"]')
+    if svc_content:
+        data["has_services"] = 1
+    else:
+        svc_section = await page.evaluate("""() => {
+            const tabs = document.querySelectorAll('[class*="NavigationMenuItem"]');
+            for (const tab of tabs) {
+                const text = tab.textContent?.trim() || '';
+                if (text === 'Services' || text === 'Услуги') {
+                    const href = tab.querySelector('a')?.getAttribute('href') || '';
+                    if ('/services' in href) return true;
+                }
+            }
+            return false;
+        }""")
+        # Only mark if they have a dedicated services tab with /services in URL
+        if svc_section:
+            data["has_services"] = 1
 
-    # Hire status
-    hire_el = await page.query_selector('[class*="Hire"], [class*="Available"]')
+    # Hire status — use the AvailabilityBadge component
+    hire_el = await page.query_selector('[class*="AvailabilityBadge-text"]')
     if hire_el:
         data["hire_status"] = (await hire_el.inner_text()).strip()[:200]
+    else:
+        hire_el2 = await page.query_selector('[class*="AvailabilityInfoCard"]')
+        if hire_el2:
+            data["hire_status"] = (await hire_el2.inner_text()).strip()[:200]
 
-    # Banner
-    banner_el = await page.query_selector('[class*="banner"], [class*="Banner"]')
+    # Banner — check for hasBanner class (present only when user uploaded one)
+    banner_el = await page.query_selector('[class*="hasBanner"]')
     data["has_banner"] = 1 if banner_el else 0
 
-    # Website link
-    web_el = await page.query_selector('a[href*="http"]:not([href*="behance.net"])')
-    data["has_website_link"] = 1 if web_el else 0
+    # Website link — look in the user info section for external links, not CDN/sharing
+    data["has_website_link"] = 0
+    user_info = await page.query_selector('[class*="UserInfo-root"], [class*="ProfileCard-userDetailsContainer"]')
+    if user_info:
+        links = await user_info.query_selector_all('a[href*="http"]')
+        for link in links:
+            href = await link.get_attribute("href") or ""
+            if "behance.net" not in href and "adobe.com" not in href:
+                data["has_website_link"] = 1
+                break
+    if not data["has_website_link"]:
+        web_link = await page.query_selector('[class*="UserInfo"] a[class*="website"], [class*="ProfileDetails"] a[rel="noopener"]')
+        if web_link:
+            data["has_website_link"] = 1
 
     # Profile completeness score (heuristic)
     score = 0
