@@ -488,10 +488,15 @@ async def scrape_project_details(page: Page, project_url: str, query: str = "") 
     data["has_external_links"] = 1 if external_count > 0 else 0
     data["external_link_count"] = external_count
 
-    # Comments count
-    comments_el = await page.query_selector('[class*="Comments"] [class*="count"], [class*="comment-count"]')
-    if comments_el:
-        data["comments_count"] = _parse_number(await comments_el.inner_text())
+    # Comments count — from embedded JSON ("commentCount":79)
+    comment_match = re.search(r'"commentCount"\s*:\s*(\d+)', html_source)
+    if comment_match:
+        data["comments_count"] = int(comment_match.group(1))
+
+    # Also extract appreciations from JSON if available (more reliable)
+    appr_json = re.search(r'"stats"\s*:\s*\{\s*"appreciations"\s*:\s*\{\s*"all"\s*:\s*(\d+)', html_source)
+    if appr_json:
+        data["json_appreciations"] = int(appr_json.group(1))
 
     # Co-owners
     owner_links = await page.query_selector_all('[class*="Owner"] a[href*="behance.net/"]')
