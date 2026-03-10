@@ -35,11 +35,11 @@ async def main():
         page = await browser.new_page(user_agent=config.USER_AGENT)
 
         for i, auth in enumerate(authors):
-            url = auth["url"] or f"{config.BEHANCE_BASE_URL}/{auth['username']}"
-            print(f"  [{i+1}/{len(authors)}] {auth['username']:<30}", end="", flush=True)
+            username = auth["username"]
+            print(f"  [{i+1}/{len(authors)}] {username:<30}", end="", flush=True)
 
             try:
-                profile_data = await scrape_author_profile(page, url)
+                profile_data = await scrape_author_profile(page, username)
                 if profile_data:
                     profile_data["username"] = auth["username"]
                     db.upsert_author(profile_data)
