@@ -12,7 +12,7 @@ conn.row_factory = sqlite3.Row
 
 for query in ["инфографика", "дизайн карточек"]:
     last_snap = conn.execute(
-        "SELECT id FROM snapshots WHERE query=? ORDER BY id DESC LIMIT 1", (query,)
+        "SELECT s.id FROM snapshots s WHERE s.query=? AND s.total_collected > 0 AND EXISTS (SELECT 1 FROM search_results sr WHERE sr.snapshot_id=s.id) ORDER BY s.id DESC LIMIT 1", (query,)
     ).fetchone()["id"]
 
     print(f"\n{'='*70}")
