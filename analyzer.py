@@ -554,6 +554,196 @@ def experiment_tracking_report() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Experiment v2: A/B comparison dashboard
+# ---------------------------------------------------------------------------
+
+def experiment_comparison() -> str:
+    """
+    Side-by-side comparison of all tracked experiment projects.
+    Shows: entry timing, position trajectory, velocity by phase,
+    and final verdict for each strategy.
+    """
+    lines = []
+    tracked = config.TRACKED_PROJECTS
+    if not tracked:
+        return ""
+
+    lines.append(f"\n{'='*80}")
+    lines.append(f"  EXPERIMENT A/B COMPARISON DASHBOARD")
+    lines.append(f"{'='*80}\n")
+
+    project_data = []
+    for tp in tracked:
+        bid = tp.get("behance_id")
+        if not bid or bid == "FILL_AFTER_PUBLISH":
+            continue
+        label = tp.get("label", bid)
+        history = db.get_tracked_history(bid)
+
+        valid = [h for h in history if h["appreciations"] > 0 or h["views"] > 0]
+        all_entries = history
+
+        entry = {}
+        entry["label"] = label
+        entry["bid"] = bid
+        entry["total_snapshots"] = len(all_entries)
+        entry["valid_snapshots"] = len(valid)
+        entry["history"] = valid
+        entry["all_history"] = all_entries
+
+        if valid:
+            first = valid[0]
+            latest = valid[-1]
+            entry["first_ts"] = first["timestamp"]
+            entry["latest_ts"] = latest["timestamp"]
+            entry["appr"] = latest["appreciations"]
+            entry["views"] = latest["views"]
+            entry["comments"] = latest["comments"]
+            entry["days"] = latest.get("days_since_publish")
+            entry["er"] = round(latest["appreciations"] / max(latest["views"], 1) * 100, 2)
+
+            # Position tracking
+            pos_inf = [h["position_infografika"] for h in valid if h["position_infografika"]]
+            pos_dc = [h["position_design_cards"] for h in valid if h["position_design_cards"]]
+            entry["ever_in_search"] = len(pos_inf) > 0 or len(pos_dc) > 0
+            entry["times_in_inf"] = len(pos_inf)
+            entry["times_in_dc"] = len(pos_dc)
+            entry["best_inf"] = min(pos_inf) if pos_inf else None
+            entry["best_dc"] = min(pos_dc) if pos_dc else None
+            entry["first_inf_ts"] = None
+            entry["first_dc_ts"] = None
+            for h in valid:
+                if h["position_infografika"] and not entry["first_inf_ts"]:
+                    entry["first_inf_ts"] = h["timestamp"]
+                if h["position_design_cards"] and not entry["first_dc_ts"]:
+                    entry["first_dc_ts"] = h["timestamp"]
+
+            # Velocity by phase (0-3d, 3-7d, 7-14d, 14-21d)
+            phases = []
+            phase_defs = [(0, 3, "0-3d"), (3, 7, "3-7d"), (7, 14, "7-14d"), (14, 21, "14-21d")]
+            for lo, hi, phase_label in phase_defs:
+                phase_points = [h for h in valid if h.get("days_since_publish") and lo <= h["days_since_publish"] < hi]
+                if len(phase_points) >= 2:
+                    appr_gain = phase_points[-1]["appreciations"] - phase_points[0]["appreciations"]
+                    views_gain = phase_points[-1]["views"] - phase_points[0]["views"]
+                    t1 = datetime.fromisoformat(phase_points[0]["timestamp"])
+                    t2 = datetime.fromisoformat(phase_points[-1]["timestamp"])
+                    days_span = max((t2 - t1).total_seconds() / 86400, 0.1)
+                    phases.append({
+                        "label": phase_label,
+                        "appr_per_day": round(appr_gain / days_span, 1),
+                        "views_per_day": round(views_gain / days_span, 1),
+                    })
+                else:
+                    phases.append({"label": phase_label, "appr_per_day": None, "views_per_day": None})
+            entry["phases"] = phases
+        else:
+            entry["appr"] = 0
+            entry["views"] = 0
+            entry["comments"] = 0
+            entry["days"] = None
+            entry["ever_in_search"] = False
+            entry["phases"] = []
+
+        project_data.append(entry)
+
+    if not project_data:
+        lines.append("  No tracked projects with data yet.")
+        return "\n".join(lines)
+
+    # --- Summary table ---
+    lines.append("  SUMMARY TABLE:")
+    lines.append(f"  {'Label':<25} {'Appr':>6} {'Views':>7} {'Comm':>5} {'Days':>5} {'ER%':>6} "
+                 f"{'In Search':>10} {'Best Inf':>9} {'Best DC':>8}")
+    lines.append(f"  {'-'*90}")
+    for p in project_data:
+        in_search = "YES" if p["ever_in_search"] else "NO"
+        best_inf = f"#{p['best_inf']}" if p.get("best_inf") else "-"
+        best_dc = f"#{p['best_dc']}" if p.get("best_dc") else "-"
+        days_str = f"{p['days']:.1f}" if p['days'] else "?"
+        er_str = f"{p.get('er', 0):.1f}%" if p["views"] > 0 else "-"
+        lines.append(f"  {p['label']:<25} {p['appr']:>6} {p['views']:>7} {p['comments']:>5} "
+                     f"{days_str:>5} {er_str:>6} {in_search:>10} {best_inf:>9} {best_dc:>8}")
+    lines.append("")
+
+    # --- Search entry timeline ---
+    lines.append("  SEARCH ENTRY TIMELINE:")
+    for p in project_data:
+        label = p["label"]
+        if p.get("first_inf_ts"):
+            lines.append(f"  {label}: first in 'инфографика' at {p['first_inf_ts'][:16]}")
+        if p.get("first_dc_ts"):
+            lines.append(f"  {label}: first in 'дизайн карточек' at {p['first_dc_ts'][:16]}")
+        if not p.get("first_inf_ts") and not p.get("first_dc_ts"):
+            lines.append(f"  {label}: NEVER appeared in search ({p['valid_snapshots']} snapshots tracked)")
+    lines.append("")
+
+    # --- Velocity by phase ---
+    lines.append("  VELOCITY BY PHASE (appr/day | views/day):")
+    phase_labels = ["0-3d", "3-7d", "7-14d", "14-21d"]
+    header = f"  {'Label':<25}"
+    for pl in phase_labels:
+        header += f" {pl:>16}"
+    lines.append(header)
+    lines.append(f"  {'-'*90}")
+
+    for p in project_data:
+        row = f"  {p['label']:<25}"
+        for phase in p.get("phases", []):
+            if phase["appr_per_day"] is not None:
+                row += f" {phase['appr_per_day']:>6.1f}a/{phase['views_per_day']:>6.1f}v"
+            else:
+                row += f" {'---':>16}"
+        lines.append(row)
+    lines.append("")
+
+    # --- Position history (compact) ---
+    lines.append("  POSITION HISTORY (инфографика):")
+    for p in project_data:
+        pos_entries = []
+        for h in p.get("history", []):
+            pos = h.get("position_infografika")
+            if pos:
+                pos_entries.append(f"#{pos}")
+            else:
+                pos_entries.append("-")
+        if pos_entries:
+            # Show last 20 snapshots max
+            shown = pos_entries[-20:]
+            lines.append(f"  {p['label']:<25} {' '.join(shown)}")
+    lines.append("")
+
+    lines.append("  POSITION HISTORY (дизайн карточек):")
+    for p in project_data:
+        pos_entries = []
+        for h in p.get("history", []):
+            pos = h.get("position_design_cards")
+            if pos:
+                pos_entries.append(f"#{pos}")
+            else:
+                pos_entries.append("-")
+        if pos_entries:
+            shown = pos_entries[-20:]
+            lines.append(f"  {p['label']:<25} {' '.join(shown)}")
+    lines.append("")
+
+    # --- Verdict ---
+    lines.append("  VERDICT:")
+    for p in project_data:
+        label = p["label"]
+        if p["ever_in_search"]:
+            stability = (p["times_in_inf"] + p["times_in_dc"]) / max(p["valid_snapshots"], 1) * 100
+            lines.append(f"  {label}: ENTERED SEARCH | stability={stability:.0f}% | "
+                         f"best_pos: inf={p.get('best_inf', '-')} dc={p.get('best_dc', '-')}")
+        else:
+            lines.append(f"  {label}: FAILED — never entered top-100 after {p.get('days', '?')} days, "
+                         f"{p['appr']} appr, {p['views']} views")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Full report
 # ---------------------------------------------------------------------------
 
@@ -581,6 +771,7 @@ def generate_full_report(queries: list[str] | None = None) -> str:
         report_parts.append(trend_analysis(query))
 
     report_parts.append(experiment_tracking_report())
+    report_parts.append(experiment_comparison())
 
     report = "\n".join(report_parts)
 

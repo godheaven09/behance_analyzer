@@ -985,45 +985,42 @@ async def _track_experiment_projects(page: Page, search_data: dict):
             await page.goto(url, wait_until="networkidle", timeout=config.NAVIGATION_TIMEOUT)
             await asyncio.sleep(_rand_delay())
 
-            card_text = await page.inner_text("body")
-
-            # Parse appreciations and views from project page stats
-            # Page shows stats in the profile card area or we can count from inner text
-            appr_match = re.search(r"[Оо]ценок|[Оо]ценка|[Оо]ценки", card_text)
-            if appr_match:
-                after = card_text[appr_match.start():]
-                nm = re.search(r":\s*([\d\s\xa0,.]+)", after)
-                if nm:
-                    # This finds per-project appreciations in comments area, not total
-                    pass
-
-            # Better: parse from the search card data we already have
-            # Use the page's own stat display
             page_html = await page.content()
 
-            # Extract stats from embedded JSON
-            stats_match = re.search(r'"stats"\s*:\s*\{([^}]+)\}', page_html)
-            if stats_match:
-                try:
-                    stats_str = "{" + stats_match.group(1) + "}"
-                    import json as _json
-                    stats_obj = _json.loads(stats_str)
-                    appr = stats_obj.get("appreciations", 0)
-                    views = stats_obj.get("views", 0)
-                    comments = stats_obj.get("comments", 0)
-                except Exception:
-                    pass
+            # Extract stats from embedded JSON — match the PROJECT-specific stats block
+            # Behance embeds: "stats":{"appreciations":{"all":5},"views":{"all":39},"comments":{"all":6}}
+            nested_stats = re.search(
+                r'"stats"\s*:\s*\{\s*"appreciations"\s*:\s*\{\s*"all"\s*:\s*(\d+)\s*\}\s*,\s*"views"\s*:\s*\{\s*"all"\s*:\s*(\d+)\s*\}',
+                page_html,
+            )
+            if nested_stats:
+                appr = int(nested_stats.group(1))
+                views = int(nested_stats.group(2))
 
-            # Fallback: parse from visible text
-            if views == 0:
-                views_m = re.search(r"[Пп]росмотров|[Пп]росмотр[аы]?", card_text)
-                if views_m:
-                    after = card_text[views_m.start():]
-                    nm = re.search(r":\s*([\d\s\xa0,.]+)", after)
-                    if nm:
-                        views = _parse_number(nm.group(1).replace("\xa0", ""))
+            comment_match = re.search(r'"commentCount"\s*:\s*(\d+)', page_html)
+            if comment_match:
+                comments = int(comment_match.group(1))
+
+            # Fallback: if nested stats not found, try flat format
+            if appr == 0 and views == 0:
+                flat_stats = re.search(
+                    r'"stats"\s*:\s*\{[^}]*"appreciations"\s*:\s*(\d+)[^}]*"views"\s*:\s*(\d+)',
+                    page_html,
+                )
+                if flat_stats:
+                    appr = int(flat_stats.group(1))
+                    views = int(flat_stats.group(2))
+
+            # Last resort fallback: parse from visible text on page
+            if appr == 0 and views == 0:
+                card_text = await page.inner_text("body")
+                # Behance shows "5\n39\n6" pattern near the stats area
+                # or we use the Published section numbers
+                date_nums = re.findall(r"(\d[\d,.\s]*)\n", card_text)
+                log.info(f"    Fallback text parse: first nums found = {date_nums[:10]}")
 
             # Published date for days_since
+            card_text = await page.inner_text("body")
             date_match = re.search(
                 r"(?:Опубликовано|Published):\s*(.+?\d{4})\s*г?\.?",
                 card_text,
@@ -1033,6 +1030,8 @@ async def _track_experiment_projects(page: Page, search_data: dict):
                 if pub_date:
                     pub_dt = datetime.strptime(pub_date, "%Y-%m-%d")
                     days_since = (datetime.utcnow() - pub_dt).total_seconds() / 86400
+
+            log.info(f"    Parsed: appr={appr} views={views} comments={comments} days={days_since}")
 
         except Exception as e:
             log.warning(f"  Error tracking {bid}: {e}")

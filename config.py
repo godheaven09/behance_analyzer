@@ -34,10 +34,19 @@ SEARCH_QUERIES = {
 
 # Tracked experiment projects — add behance_id after publishing
 # Format: {"label": "description", "behance_id": "123456", "url": "https://..."}
+# Experiment v1 (completed):
+#   P1 = boost 100 + comments -> never entered top-100
+# Experiment v2 (active): 4 re-uploaded projects, different strategies
+#   P2 = control (zero boost)
+#   P3 = organic seed (real people, 10-20 appr in 48h)
+#   P4 = drip boost (10 appr/day for 10 days, no comments)
+#   P5 = burst + pause (50 appr day 1-2, pause, then adapt)
 TRACKED_PROJECTS = [
-    # {"label": "A_bot_new_title",   "behance_id": "", "url": ""},
-    # {"label": "B_organic_new_title", "behance_id": "", "url": ""},
-    # {"label": "C_bot_old_title",   "behance_id": "", "url": ""},
+    {"label": "P1_boost100_comments", "behance_id": "245554661", "url": "https://www.behance.net/gallery/245554661/infografika-dizajn-kartochek-dlja-WB-OZON-kabel"},
+    {"label": "P2_control_zero",   "behance_id": "247048877", "url": "https://www.behance.net/gallery/247048877/infografika-dizajn-kartochek-dlja-Wb-Ozon-parfjum"},
+    {"label": "P3_organic_seed",   "behance_id": "247049331", "url": "https://www.behance.net/gallery/247049331/infografika-dizajn-kartochek-dlja-Wb-Ozon-audiokabel"},
+    {"label": "P4_drip_boost",     "behance_id": "247049545", "url": "https://www.behance.net/gallery/247049545/infografika-dizajn-kartochek-dlja-Wb-Ozon-poloski"},
+    {"label": "P5_burst_pause",    "behance_id": "247050017", "url": "https://www.behance.net/gallery/247050017/infografika-dizajn-kartochek-dlja-Wb-Ozon-ochki"},
 ]
 
 SORT_TYPE = "recommended"
